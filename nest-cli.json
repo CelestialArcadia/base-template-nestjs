@@ -45,6 +45,15 @@
       "compilerOptions": {
         "tsConfigPath": "libs/common/tsconfig.lib.json"
       }
+    },
+    "metrics": {
+      "type": "application",
+      "root": "apps/metrics",
+      "entryFile": "main",
+      "sourceRoot": "apps/metrics/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/metrics/tsconfig.app.json"
+      }
     }
   }
 }
