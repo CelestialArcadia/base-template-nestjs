@@ -27,7 +27,7 @@
     "@nestjs/microservices": "^11.0.9",
     "@nestjs/mongoose": "^11.0.1",
     "@nestjs/passport": "^11.0.5",
-    "@nestjs/platform-express": "^11.0.9",
+    "@nestjs/platform-express": "^11.1.11",
     "@nestjs/swagger": "^11.0.3",
     "@willsoto/nestjs-prometheus": "^6.0.2",
     "amqp-connection-manager": "^4.1.14",
