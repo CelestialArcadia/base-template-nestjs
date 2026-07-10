@@ -28,4 +28,16 @@ export class User extends BaseSchema {
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
+
+// Never expose the password / refresh-token hashes in any serialized response
+// (the auto-generated CRUD returns User docs directly). The live document still
+// carries these fields, so auth verification (bcrypt compare) keeps working.
+const stripSecrets = (_doc: unknown, ret: Record<string, unknown>) => {
+  delete ret.password;
+  delete ret.refreshToken;
+  return ret;
+};
+UserSchema.set('toJSON', { transform: stripSecrets });
+UserSchema.set('toObject', { transform: stripSecrets });
+
 export const UserModel: Model<User> = model<User>('User', UserSchema);
