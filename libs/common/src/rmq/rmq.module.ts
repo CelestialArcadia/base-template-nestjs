@@ -3,7 +3,7 @@ https://docs.nestjs.com/modules
 */
 
 import { DynamicModule, Module } from '@nestjs/common';
-import { RmqService } from './rmq.service';
+import { QUEUE_OPTIONS, RmqService } from './rmq.service';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { ConfigService } from '@nestjs/config';
 
@@ -29,6 +29,8 @@ export class RmqModule {
               options: {
                 urls: [configService.getOrThrow<string>('RABBIT_MQ_URI')],
                 queue: configService.getOrThrow(`RABBIT_MQ_${name}_QUEUE`),
+                // Must match the consumer's declaration exactly — see QUEUE_OPTIONS.
+                queueOptions: QUEUE_OPTIONS,
               },
             }),
             inject: [ConfigService],
