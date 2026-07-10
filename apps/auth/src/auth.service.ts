@@ -57,12 +57,14 @@ export class AuthService {
     response.cookie('Authentication', accessToken, {
       httpOnly: true,
       secure: this.configService.getOrThrow('NODE_ENV') === 'production',
+      sameSite: 'lax',
       expires: expiresAccessToken,
     });
 
     response.cookie('Refresh', refreshToken, {
       httpOnly: true,
       secure: this.configService.getOrThrow('NODE_ENV') === 'production',
+      sameSite: 'lax',
       expires: expiresRefreshToken,
     });
   }
