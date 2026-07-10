@@ -128,3 +128,11 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Agent / working notes — local only, never published with the repo.
+# README.md stays tracked: it is the public-facing document.
+CLAUDE.md
+.claude/
+.github/project-agents/
+.github/decisions/
+docs/COMMIT_PLAN.md
