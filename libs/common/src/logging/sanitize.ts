@@ -19,6 +19,19 @@ const INVISIBLE_RANGES: ReadonlyArray<readonly [number, number]> = [
   [0xfeff, 0xfeff],
 ];
 
+/**
+ * A lone surrogate is ill-formed UTF-16: `JSON.stringify` will happily embed it
+ * and downstream encoders then disagree about what to do with it.
+ *
+ * One reaches us whenever the input bound below slices through a surrogate pair
+ * (it cuts UTF-16 code units, not code points), so the orphaned half arrives
+ * here as its own "code point". Reject the whole range — a well-formed pair is
+ * never seen as a surrogate, because `Array.from` yields it as one code point
+ * above 0xFFFF.
+ */
+const SURROGATE_START = 0xd800;
+const SURROGATE_END = 0xdfff;
+
 /** Worst case a code point costs 2 UTF-16 units; bound work before filtering. */
 const INPUT_BOUND_FACTOR = 2;
 
@@ -33,6 +46,7 @@ function isPrintable(char: string): boolean {
 
   if (code < FIRST_PRINTABLE || code === DEL) return false; // C0 + DEL (ESC is 0x1B, so ANSI dies here)
   if (code >= C1_START && code <= C1_END) return false; // C1, incl. U+0085 NEL
+  if (code >= SURROGATE_START && code <= SURROGATE_END) return false; // orphaned half-pair
 
   return !INVISIBLE_RANGES.some(([start, end]) => code >= start && code <= end);
 }
@@ -52,11 +66,13 @@ export function sanitizeForLog(
   if (typeof value !== 'string') return '<invalid>';
 
   // Slice the *input* first: the caller's cap is on output, but a hostile
-  // payload shouldn't buy an O(n) scan on every failed message.
+  // payload shouldn't buy an O(n) scan on every failed message. This cuts UTF-16
+  // code units, so it can land mid-surrogate-pair — `isPrintable` drops the
+  // orphaned half, which is why the output is always well-formed.
   const bounded = value.slice(0, maxLength * INPUT_BOUND_FACTOR);
 
-  // Array.from iterates by code point, so a surrogate pair stays intact —
-  // and slicing the array (not the joined string) can't split one in half.
+  // Array.from iterates by code point, so an intact surrogate pair is one
+  // element — and slicing the array (not the joined string) can't split one.
   return Array.from(bounded)
     .filter(isPrintable)
     .slice(0, maxLength)
