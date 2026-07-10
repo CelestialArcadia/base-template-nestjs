@@ -83,4 +83,31 @@ describe('BillingService.bill', () => {
 
     await expect(service.bill(event)).rejects.toThrow('connection reset');
   });
+
+  // Isolates the `error.code === 'P2002'` half of the guard: a Prisma error of a
+  // different code must rethrow even when meta.target happens to name order_id.
+  it('rethrows a non-P2002 Prisma error even if meta.target names order_id', async () => {
+    create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Record not found', {
+        code: 'P2025',
+        clientVersion: 'test',
+        meta: { target: ['order_id'] },
+      }),
+    );
+
+    await expect(service.bill(event)).rejects.toThrow('Record not found');
+  });
+
+  // Isolates the `instanceof PrismaClientKnownRequestError` half: duck-typing on
+  // `.code` would let any thrown object impersonate a duplicate delivery and
+  // silently discard the order.
+  it('rethrows a duck-typed object that merely looks like a P2002', async () => {
+    const impostor = Object.assign(new Error('not a prisma error'), {
+      code: 'P2002',
+      meta: { target: ['order_id'] },
+    });
+    create.mockRejectedValue(impostor);
+
+    await expect(service.bill(event)).rejects.toThrow('not a prisma error');
+  });
 });

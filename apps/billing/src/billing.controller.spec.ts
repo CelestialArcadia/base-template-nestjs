@@ -38,9 +38,19 @@ describe('BillingController.handlePlacedOrder', () => {
 
   it('acks only after the invoice is written', async () => {
     const order: string[] = [];
-    bill.mockImplementation(async () => {
-      order.push('bill');
-    });
+
+    // The write must resolve on a LATER tick. A mock that pushes synchronously
+    // would record ['bill', 'ack'] even against a fire-and-forget `bill(); ack();`
+    // — the exact bug this test exists to catch — so it would prove nothing.
+    bill.mockImplementation(
+      () =>
+        new Promise<void>((resolve) =>
+          setImmediate(() => {
+            order.push('bill');
+            resolve();
+          }),
+        ),
+    );
     ack.mockImplementation(() => order.push('ack'));
 
     await controller.handlePlacedOrder(event, context);
