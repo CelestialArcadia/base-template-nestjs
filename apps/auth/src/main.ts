@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 // Why *?
-import * as cookieParser from 'cookie-parser';
+import cookieParser from 'cookie-parser';
 import { AuthModule } from './auth.module';
 
 async function bootstrap() {
