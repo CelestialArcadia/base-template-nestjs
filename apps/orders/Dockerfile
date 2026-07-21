@@ -1,4 +1,7 @@
-FROM node:alpine As development
+FROM node:22-alpine As development
+
+# Prisma's query engine is dynamically linked against OpenSSL; alpine ships without it.
+RUN apk add --no-cache openssl
 
 WORKDIR /usr/src/app
 
@@ -8,9 +11,13 @@ RUN npm install
 
 COPY . .
 
+# Orders itself has no Postgres, but the monorepo build typechecks billing,
+# which imports the generated @prisma/client types.
+RUN npx prisma generate
+
 RUN npm run build
 
-FROM node:alpine as production
+FROM node:22-alpine as production
 
 ARG NODE_ENV=production
 ENV NODE_ENV=${NODE_ENV}

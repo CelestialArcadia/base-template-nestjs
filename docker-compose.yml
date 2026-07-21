@@ -11,6 +11,7 @@ services:
       - mongodb-primary
       - mongodb-secondary
       - mongodb-arbiter
+      - elasticsearch
     volumes:
       - .:/usr/src/app
       - /usr/src/app/node_modules
@@ -21,23 +22,82 @@ services:
       context: .
       dockerfile: ./apps/billing/Dockerfile
       target: development
-    command: npm run start:dev billing
+    # Apply committed migrations before booting. `migrate deploy` is the
+    # non-interactive, production-shaped command (never `migrate dev` here).
+    # `exec` matters: without it `sh` stays PID 1, swallows SIGTERM, and the Nest
+    # process is SIGKILLed after the grace period instead of shutting down cleanly.
+    command: sh -c "npx prisma migrate deploy && exec npm run start:dev billing"
     env_file:
       - ./apps/billing/.env
     depends_on:
-      - mongodb-primary
-      - mongodb-secondary
-      - mongodb-arbiter
+      mongodb-primary:
+        condition: service_started
+      mongodb-secondary:
+        condition: service_started
+      mongodb-arbiter:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    # Capped: a deterministic boot failure (bad migration, DLX topology mismatch)
+    # should fail loudly, not retry forever and bury the error in restart noise.
+    restart: on-failure:5
     volumes:
       - .:/usr/src/app
       - /usr/src/app/node_modules
   rabbitmq:
-    image: rabbitmq
+    # Pinned to 4.0: RabbitMQ 4.1+ enforces a minimum AMQP frame_max of 8192,
+    # but the amqplib client here negotiates 4096, so 4.1+ rejects every connection.
+    # 4.0 is current-gen and does not enforce that floor. (management UI on :15672)
+    image: rabbitmq:4.0-management
     ports:
       - '5672:5672'
+      - '15672:15672'
+    healthcheck:
+      # billing asserts its dead-letter topology at boot and exits(1) if the
+      # broker isn't reachable — on a cold `docker compose up` it would lose
+      # the race without this gate.
+      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_port_connectivity']
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
 
+  # Billing's invoice ledger. Local container on purpose: this repo must run
+  # offline with `docker compose up` — no SaaS signup, no pasted credential.
+  # To demo against a hosted Postgres (Neon, RDS, …) just repoint DATABASE_URL.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=billing
+      - POSTGRES_PASSWORD=billing_dev
+      - POSTGRES_DB=billing
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+    healthcheck:
+      # billing waits on this: `migrate deploy` fails if Postgres isn't accepting
+      # connections yet, and depends_on alone only waits for the container to start.
+      test: ['CMD-SHELL', 'pg_isready -U billing -d billing']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  elasticsearch:
+    image: docker.io/library/elasticsearch:8.15.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - '9200:9200'
+
+  # Bitnami retired its free docker.io/bitnami/* tags (Aug 2025); bitnamilegacy/* is the
+  # frozen (unmaintained) fallback — fine for a local demo, do not use in production.
   mongodb-primary:
-    image: docker.io/bitnami/mongodb:8.0
+    image: docker.io/bitnamilegacy/mongodb:8.0
     environment:
       - MONGODB_ADVERTISED_HOSTNAME=mongodb-primary
       - MONGODB_REPLICA_SET_MODE=primary
@@ -49,7 +109,7 @@ services:
       - 27017:27017
 
   mongodb-secondary:
-    image: docker.io/bitnami/mongodb:8.0
+    image: docker.io/bitnamilegacy/mongodb:8.0
     depends_on:
       - mongodb-primary
     environment:
@@ -60,7 +120,7 @@ services:
       - MONGODB_REPLICA_SET_KEY=replicasetkey123
 
   mongodb-arbiter:
-    image: docker.io/bitnami/mongodb:8.0
+    image: docker.io/bitnamilegacy/mongodb:8.0
     depends_on:
       - mongodb-primary
     environment:
@@ -75,4 +135,6 @@ services:
   #     - 27017:27017
 volumes:
   mongodb_master_data:
+    driver: local
+  postgres_data:
     driver: local

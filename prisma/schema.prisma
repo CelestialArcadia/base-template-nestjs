@@ -1,0 +1,47 @@
+// Postgres backs the billing service only. Orders/auth stay on MongoDB.
+// Why two databases: invoices are money — they need ACID writes, a unique
+// constraint for idempotency, and CHECK constraints the database enforces.
+// Order documents are schema-loose and read-heavy, so they stay in Mongo.
+// The two services share no database; they communicate over RabbitMQ.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// NOTE: the CHECK constraints on `quantity` and `amount_cents` cannot be expressed
+// in the Prisma schema DSL — they live in the raw SQL of the initial migration.
+// Prisma therefore does not know about them: if a future generated migration ever
+// alters those columns, it may drop the constraints. Re-add them by hand.
+
+enum InvoiceStatus {
+  ISSUED
+  PAID
+  VOID
+}
+
+model Invoice {
+  id String @id @default(uuid())
+
+  /// The id of the order that produced this invoice. UNIQUE is load-bearing:
+  /// RabbitMQ guarantees at-least-once delivery, so a redelivered `place-order`
+  /// event MUST NOT create a second invoice. The database is the guard, not the
+  /// application — two concurrent consumers race here and exactly one wins.
+  orderId String @unique @map("order_id")
+
+  itemName String @map("item_name")
+  quantity Int
+
+  /// Money is stored as an integer of minor units (cents), never a float.
+  amountCents Int    @map("amount_cents")
+  currency    String @default("EUR")
+
+  status    InvoiceStatus @default(ISSUED)
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  @@map("invoices")
+}
