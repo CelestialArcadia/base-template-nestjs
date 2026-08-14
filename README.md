@@ -1,11 +1,11 @@
 # NestJS Microservices Reference Architecture
 
-A production-shaped **NestJS monorepo** demonstrating the backend patterns that matter at scale:
-**asynchronous microservices over RabbitMQ**, **JWT access + refresh authentication**, a **MongoDB replica
-set**, **Elasticsearch** search, and **Prometheus** observability — wired together in one coherent, runnable stack.
+A production-shaped NestJS monorepo showing how asynchronous microservices fit together: RabbitMQ messaging
+with manual acks, JWT access and refresh authentication, a MongoDB replica set, Elasticsearch search, and
+Prometheus metrics. One stack, wired end to end, that boots with `docker compose up`.
 
-> **What this is:** a clean, opinionated *reference architecture* / starting point — not a finished product.
-> It exists to show how these pieces fit together with correct boundaries, messaging semantics, and auth flow.
+> **What this is:** an opinionated reference architecture and starting point, not a finished product. It
+> exists to show how the pieces fit together with correct boundaries, messaging semantics and auth flow.
 > Scope is called out honestly in [Status & scope](#status--scope) below.
 
 ---
@@ -39,19 +39,20 @@ flowchart LR
   class Orders,Billing,Auth,User,Metrics svc;
 ```
 
-**The messaging pattern** (the interesting part): `orders` talks to `billing` two ways over RabbitMQ —
-- `client.emit('place-order', order)` — **fire-and-forget** event (no response needed), and
-- `client.send({ cmd: 'fetch-orders' }, {})` — **request/response** (RxJS `Observable` reply).
+**The messaging pattern:** `orders` talks to `billing` two ways over RabbitMQ.
 
-Messages are `persistent` with **manual `ack`** (`noAck: false`) so nothing is lost on consumer restart.
+- `client.emit('place-order', order)` is fire-and-forget, because no response is needed.
+- `client.send({ cmd: 'fetch-orders' }, {})` is request/response, returning an RxJS `Observable`.
+
+Messages are `persistent` with manual `ack` (`noAck: false`), so nothing is lost on consumer restart.
 
 ### Idempotent consumers
 
-RabbitMQ guarantees **at-least-once** delivery, so a duplicate `place-order` event is a certainty, not an
-edge case — a consumer that naively inserts would double-bill. `billing` therefore keys every invoice to
-the producer-assigned `orderId` behind a **unique index**, and treats a unique-violation on insert as
-success. The database is the guard, not the application: two consumers can race, exactly one wins, and the
-loser's message is still acked.
+RabbitMQ guarantees at-least-once delivery, so a duplicate `place-order` event is a certainty rather than an
+edge case, and a consumer that naively inserts would double-bill. `billing` therefore keys every invoice to
+the producer-assigned `orderId` behind a unique index, and treats a unique-violation on insert as success.
+The database is the guard, not the application. Two consumers can race, exactly one wins, and the loser's
+message is still acked.
 
 ```bash
 curl -X POST localhost:3000/place-order -H 'Content-Type: application/json' \
@@ -63,22 +64,22 @@ docker compose exec postgres psql -U billing -d billing -c 'SELECT * FROM invoic
 ```
 
 Replay that exact message on the queue (RabbitMQ UI at `localhost:15672`, guest/guest) and billing logs
-`already invoiced — duplicate delivery ignored`. The invoice count stays at **1**.
+`already invoiced — duplicate delivery ignored`. The invoice count stays at 1.
 
 ### Failure handling: nack, don't stall
 
 A message that fails for a deterministic reason (bad payload, constraint violation) will fail on every
-redelivery, so requeueing it spins hot. But *silently not acking* is worse: the delivery stays parked on the
-open channel — invisible in the queue depth, never retried — until the connection drops. So billing **nacks
-with `requeue: false`** onto a dead-letter exchange, and `billing` declares `billing.dlq` at boot (a DLX that
-routes nowhere discards silently). Poison messages end up somewhere you can read them.
+redelivery, so requeueing it spins hot. Silently not acking is worse. The delivery stays parked on the open
+channel, invisible in the queue depth and never retried, until the connection drops. So `billing` nacks with
+`requeue: false` onto a dead-letter exchange and declares `billing.dlq` at boot, because a DLX that routes
+nowhere discards silently. Poison messages end up somewhere you can read them.
 
 ### Why two databases
 
-This is deliberate, not accretion. **Invoices are money**, so they live in Postgres: ACID writes, a unique
+This is deliberate, not accretion. Invoices are money, so they live in Postgres: ACID writes, a unique
 constraint for idempotency, and `CHECK` constraints the database enforces even if application code is
-bypassed. Amounts are stored as **integer cents**, never floats. **Orders are documents** — schema-loose,
-read-heavy, fanned out to Elasticsearch — so they stay in MongoDB. The two services share no database and
+bypassed. Amounts are stored as integer cents, never floats. Orders are documents, schema-loose and
+read-heavy, so they stay in MongoDB and fan out to Elasticsearch. The two services share no database and
 communicate only over RabbitMQ.
 
 ---
@@ -88,8 +89,8 @@ communicate only over RabbitMQ.
 | App | Role | Highlights |
 |---|---|---|
 | **orders** | HTTP API gateway (`:3000`) | Places/fetches orders; emits + sends to `billing` over RabbitMQ; Elasticsearch search |
-| **billing** | Async consumer | Consumes order events from RabbitMQ (decoupled from the request path); writes an **idempotent invoice ledger** to Postgres via Prisma |
-| **auth** | Authentication | JWT **access + refresh** tokens, Passport (local / jwt / jwt-refresh), **bcrypt**, refresh-token rotation stored **hashed**, `httpOnly`+`secure` cookies |
+| **billing** | Async consumer | Consumes order events from RabbitMQ (decoupled from the request path); writes an idempotent invoice ledger to Postgres via Prisma |
+| **auth** | Authentication | JWT access + refresh tokens, Passport (local / jwt / jwt-refresh), bcrypt, refresh-token rotation stored hashed, `httpOnly`+`secure` cookies |
 | **user** | User domain | Mongoose user schema + CRUD (consumed by `auth`) |
 | **metrics** | Observability | Prometheus metrics (`@willsoto/nestjs-prometheus`) + a request logging interceptor |
 | **libs/common** | Shared kernel | `RmqService` (connection/ack), Mongoose DB module + base schema, Elasticsearch search module, order observer/subscriber |
@@ -100,10 +101,11 @@ communicate only over RabbitMQ.
 
 **Runtime:** NestJS 11 · TypeScript 5 · Node · RxJS
 **Messaging:** RabbitMQ (`amqplib` + `amqp-connection-manager`, `@nestjs/microservices` `Transport.RMQ`)
-**Data:** MongoDB (Mongoose) as a **replica set** (primary / secondary / arbiter) · **PostgreSQL 16 + Prisma** (billing ledger) · Elasticsearch 8
+**Data:** MongoDB (Mongoose) as a replica set (primary / secondary / arbiter) · PostgreSQL 16 + Prisma (billing ledger) · Elasticsearch 8
 **Auth:** `@nestjs/jwt` · Passport (local + JWT + JWT-refresh) · bcrypt · httpOnly cookies
 **Validation/config:** `class-validator` · Joi · `@nestjs/config`
 **Observability:** Prometheus (`prom-client`) · logging interceptor · Swagger (`@nestjs/swagger`)
+**Testing/CI:** Jest · GitHub Actions (`.github/workflows/ci.yml`, build + test on push and pull request)
 **Ops:** Docker Compose (per-service Dockerfiles, dev target)
 
 ---
@@ -133,13 +135,14 @@ Then:
 - **MongoDB** (replica set) → mongodb://localhost:27017
 - **Elasticsearch** → http://localhost:9200
 
-> First `docker compose up` pulls Elasticsearch (~1 GB) and boots the Mongo replica set — give it a minute
+> First `docker compose up` pulls Elasticsearch (~1 GB) and boots the Mongo replica set. Give it a minute
 > before the orders service reports healthy.
 
 Run locally without Docker (per app):
 ```bash
 npm install
 npm run start:dev orders     # or: billing | auth | metrics
+npm test                     # Jest suite
 ```
 
 ### Environment
@@ -152,22 +155,22 @@ Config is read via `@nestjs/config` (`ConfigService.getOrThrow`), so a missing v
 | `RABBIT_MQ_URI` | orders, billing | `amqp://rabbitmq:5672` |
 | `RABBIT_MQ_BILLING_QUEUE` | orders, billing | `billing` |
 | `ELASTIC_SEARCH_URL` | orders (search) | `http://elasticsearch:9200` |
-| `DATABASE_URL` | billing (invoices) | `postgresql://billing:billing_dev@postgres:5432/billing?schema=public` — repoint at any hosted Postgres (Neon, RDS, …) to run against a cloud DB |
+| `DATABASE_URL` | billing (invoices) | `postgresql://billing:billing_dev@postgres:5432/billing?schema=public`. Repoint at any hosted Postgres (Neon, RDS) to run against a cloud DB |
 | `JWT_SECRET` / `JWT_REFRESH_TOKEN_SECRET` | auth | *(generate your own)* |
 | `JWT_EXPIRATION` / `JWT_REFRESH_TOKEN_EXPIRATION` | auth | ms values |
 
-> ⚠️ **Local-dev defaults — not for any network-reachable deployment.** All `.env` files are gitignored.
-> - MongoDB passwords in `docker-compose.yml` (`password123`, `replicasetkey123`) are placeholders — change them for any non-local use.
-> - **Elasticsearch** runs with `xpack.security.enabled=false` (no auth) for local dev — enable security before exposing `:9200`.
-> - **RabbitMQ** management UI (`:15672`) uses the default `guest`/`guest` login — local only.
-> - The compose publishes DB/broker ports on all interfaces for convenience; bind them to `127.0.0.1` (or drop them) before running on a shared/routable host.
+> ⚠️ **Local-dev defaults, not for any network-reachable deployment.** All `.env` files are gitignored.
+> - MongoDB passwords in `docker-compose.yml` (`password123`, `replicasetkey123`) are placeholders. Change them for any non-local use.
+> - Elasticsearch runs with `xpack.security.enabled=false` (no auth) for local dev. Enable security before exposing `:9200`.
+> - The RabbitMQ management UI (`:15672`) uses the default `guest`/`guest` login, so keep it local.
+> - The compose publishes DB/broker ports on all interfaces for convenience. Bind them to `127.0.0.1`, or drop them, before running on a shared or routable host.
 
 ---
 
 ## Project structure
 ```
 apps/
-  orders/    HTTP gateway — emits/sends to billing, ES search
+  orders/    HTTP gateway: emits/sends to billing, ES search
   billing/   RabbitMQ consumer
   auth/      JWT access+refresh, Passport strategies, guards
   user/      Mongoose user schema + CRUD
@@ -180,34 +183,39 @@ docker-compose.yml   orders + billing + rabbitmq + mongo replica set
 ---
 
 ## Status & scope
-Honest about what's finished vs. illustrative — because a reference is only useful if you trust its labels:
+Honest about what is finished and what is illustrative, because a reference is only useful if you trust its
+labels.
 
-- ✅ **Solid:** the RabbitMQ messaging semantics (emit vs send, persistent + manual ack), bcrypt password/refresh-token
-  hashing, the Mongo replica-set compose, the monorepo boundaries and shared `libs/common`.
-- 🚧 **Scaffolded / illustrative:** the order → Elasticsearch **observer/subscriber** is written in a TypeORM
-  idiom and marked `TODO` to port to Mongoose change-streams; the logging interceptor is a minimal `before/after`
-  stub; not every app has its own Dockerfile (the compose stack runs `orders` + `billing`).
-- ⛔ **Not included:** the `k8s/` directory is a placeholder (no manifests); no CI pipeline yet.
+- ✅ **Solid:** the RabbitMQ messaging semantics (emit vs send, persistent + manual ack), bcrypt password and
+  refresh-token hashing, the Mongo replica-set compose, the monorepo boundaries and shared `libs/common`.
+  Billing's idempotency, its dead-lettering and log sanitization are covered by a Jest suite that runs in CI
+  on every push and pull request.
+- 🚧 **Scaffolded / illustrative:** the order to Elasticsearch observer/subscriber is written in a TypeORM
+  idiom and marked `TODO` to port to Mongoose change-streams. The logging interceptor is a minimal
+  before/after stub, and not every app has its own Dockerfile (the compose stack runs `orders` + `billing`).
+- ⛔ **Not included:** no Kubernetes manifests. The empty local `k8s/` directory is untracked, so a clone
+  will not contain it.
 
 ### Demo status & security
-> **This is a reference/demo, not production-hardened. Don't deploy with real data.** A security pass (2026-07)
-> reviewed the auth path; the fixes applied are listed below.
+> **This is a reference and demo, not production-hardened. Don't deploy it with real data.** A July 2026
+> review of the auth path produced the fixes below.
 
 **Fixed (2026-07):**
-- Login/refresh now work — restored the missing `return` in the `CurrentUser` decorator and aligned the refresh-cookie
-  name (`Refresh`).
-- User responses no longer expose password / refresh-token hashes — a schema `toJSON`/`toObject` transform strips them
-  from all serialized output (auth still reads them from the live document).
-- Auth cookies set an explicit `sameSite: 'lax'`. Removed the deprecated, unused legacy `elasticsearch` client.
+- Login and refresh now work. The `CurrentUser` decorator was missing its `return`, and the refresh-cookie
+  name is now aligned (`Refresh`).
+- User responses no longer expose password or refresh-token hashes. A schema `toJSON`/`toObject` transform
+  strips them from all serialized output, while auth still reads them from the live document.
+- Auth cookies set an explicit `sameSite: 'lax'`, and the deprecated, unused legacy `elasticsearch` client
+  was removed.
 
-**Remaining (documented demo limitations — do before any real deployment):**
-- The auto-generated `User` CRUD (`ncrudify`) is guarded by authentication only — it still allows **cross-account
-  writes** (no object-level authZ). Gate it behind an owner/role check, or hand-write the endpoints. *(v1.x,
-  single-maintainer lib — fine for a demo, replace for production.)*
-- `orders` HTTP endpoints have no auth guard; the search `?q` param is unvalidated.
-- Run `npm audit fix` (non-breaking) — the toolchain has known advisories.
+**Remaining (documented demo limitations, to do before any real deployment):**
+- The auto-generated `User` CRUD (`ncrudify`) is guarded by authentication only, so it still allows
+  cross-account writes with no object-level authZ. Gate it behind an owner or role check, or hand-write the
+  endpoints. (`ncrudify` is v1.x with a single maintainer: fine for a demo, worth replacing for production.)
+- `orders` HTTP endpoints have no auth guard, and the search `?q` param is unvalidated.
+- Run `npm audit fix` (non-breaking). The toolchain has known advisories.
 
 ---
 
 ## License
-UNLICENSED — reference/portfolio use.
+UNLICENSED. Reference and portfolio use.
