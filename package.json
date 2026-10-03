@@ -46,7 +46,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.1",
     "cookie-parser": "^1.4.7",
-    "joi": "^17.13.3",
+    "joi": "^17.13.7",
     "mongoose": "^8.9.5",
     "ncrudify": "^1.2.5",
     "npm-check-updates": "^17.1.14",
